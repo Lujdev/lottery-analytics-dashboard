@@ -42,7 +42,7 @@ uv run python -m etl.extractors.providers
 uv run streamlit run dashboard/app.py
 ```
 
-Navigate to `http://localhost:8501`. Login with password: `***REMOVED***`
+Navigate to `http://localhost:8501`. Login with password configured in `.streamlit/secrets.toml`.
 
 ## Pages
 
@@ -122,7 +122,7 @@ MIT — code is open source. **Data (`data/`) is NOT included** — it's proprie
 
 ## Notes
 
-- Auth password: `***REMOVED***` (configured in `.streamlit/secrets.toml`)
+- Auth password: configured in `.streamlit/secrets.toml` (not committed)
 - Dashboard caches Streamlit functions (KPIs, rates) with configurable TTL
 - ETL uses fresh DB connection per daily partition (avoids timeout on large months)
 - Parquet queries scale: 5M+ agency rows, 50M+ bet rows, <500ms response times
