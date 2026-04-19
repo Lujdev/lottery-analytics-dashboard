@@ -6,17 +6,5 @@ services:
       - /opt/lottery-analytics/data:/app/data:ro
     environment:
       - PYTHONUNBUFFERED=1
-    expose:
-      - "8501"
-
-  nginx:
-    image: nginx:alpine
-    restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - dashboard
+      - "8501:8501"
