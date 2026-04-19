@@ -127,6 +127,3 @@ MIT — code is open source. **Data (`data/`) is NOT included** — it's proprie
 - ETL uses fresh DB connection per daily partition (avoids timeout on large months)
 - Parquet queries scale: 5M+ agency rows, 50M+ bet rows, <500ms response times
 
----
-
-Built with ❤️ for portfolio + production.
