@@ -3,7 +3,7 @@ services:
     build: .
     restart: unless-stopped
     volumes:
-      - ./data:/app/data:ro
+      - /opt/lottery-analytics/data:/app/data:ro
     environment:
       - PYTHONUNBUFFERED=1
     expose:
