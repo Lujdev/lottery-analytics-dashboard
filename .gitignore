@@ -1,0 +1,51 @@
+# Environment
+.env
+.env.local
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.py[cod]
+*$py.class
+build/
+dist/
+*.egg-info/
+
+# Data (proprietary — extract locally, transfer to VPS separately)
+data/
+*.parquet
+
+# Credentials
+.streamlit/secrets.toml
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/*.ipynb
+
+# Package manager
+uv.lock
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# SSL/Certs
+ssl/
+*.pem
+*.key
+*.crt

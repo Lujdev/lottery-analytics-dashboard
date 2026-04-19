@@ -1,0 +1,32 @@
+[project]
+name = "data-analisis-loteria"
+version = "0.1.0"
+description = "PremierPluss — Dashboard de análisis de datos"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.1.0",
+    "pandas>=2.2.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
+    "streamlit>=1.40.0",
+    "plotly>=5.24.0",
+    "python-dotenv>=1.0.0",
+    "python-dateutil>=2.9.0",
+    "streamlit-authenticator>=0.4.2",
+]
+
+[project.optional-dependencies]
+ml = [
+    "scikit-learn>=1.5.0",
+    "scipy>=1.14.0",
+]
+dev = [
+    "jupyter>=1.1.0",
+    "ipykernel>=6.29.0",
+]
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.0",
+    "ipykernel>=6.29.0",
+]
