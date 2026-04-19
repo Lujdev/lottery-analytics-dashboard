@@ -8,14 +8,14 @@ def get_authenticator():
         "usernames": {
             "admin": {
                 "name": "Admin",
-                "password": st.secrets.get("password", "***REMOVED***"),
+                "password": st.secrets["password"],
             }
         }
     }
     return stauth.Authenticate(
         credentials=credentials,
         cookie_name="premier_analytics",
-        cookie_key=st.secrets.get("cookie_key", "fallback_key"),
+        cookie_key=st.secrets["cookie_key"],
         cookie_expiry_days=30,
     )
 
