@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import sys
@@ -12,7 +13,9 @@ from dashboard.data import (
     top_agencias_anulacion,
     anulaciones_por_rol,
     kpis_anulaciones,
+    prediccion_anomalias, predicciones_disponibles,
 )
+from dashboard.llm import generate_anomaly_narrative, is_configured
 
 st.set_page_config(page_title="Anomalías y Anulaciones", layout="wide")
 
@@ -110,3 +113,91 @@ if df_sospechosas.empty:
     st.success("No se detectaron agencias con % anulación > 30%")
 else:
     st.dataframe(df_sospechosas, use_container_width=True, hide_index=True)
+
+# ── Anomalías ML ────────────────────────────────────────────────────────────
+st.divider()
+st.subheader("🤖 Detección de anomalías operativas (ML)")
+
+preds_ok = predicciones_disponibles()
+if not preds_ok["anomalies"]:
+    st.info(
+        "Modelo de detección de anomalías no disponible. "
+        "Corré `python -m ml.run_all` para generar predicciones."
+    )
+else:
+    df_anom = prediccion_anomalias()
+    if df_anom.empty:
+        st.warning("El archivo de anomalías existe pero está vacío.")
+    else:
+        st.caption(
+            "Isolation Forest puntuando comportamiento multivariado por agencia. "
+            "Score más negativo = más anómalo. Severidad: normal / warning / critical."
+        )
+        # Solo anómalos
+        df_out = df_anom[df_anom["is_anomaly"] == True].copy()
+        if df_out.empty:
+            st.success("No se detectaron outliers en la última corrida.")
+        else:
+            # KPIs
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Outliers detectados", f"{len(df_out):,}")
+            k2.metric("Críticos", f"{len(df_out[df_out['severity'] == 'critical']):,}")
+            k3.metric("Warnings", f"{len(df_out[df_out['severity'] == 'warning']):,}")
+
+            col_a1, col_a2 = st.columns(2)
+            with col_a1:
+                st.subheader("Severidad de anomalías")
+                sev_counts = df_out["severity"].value_counts().reset_index()
+                sev_counts.columns = ["severity", "count"]
+                fig_sev = px.bar(
+                    sev_counts, x="severity", y="count",
+                    color="severity",
+                    color_discrete_map={
+                        "normal": "#2ECC71",
+                        "warning": "#F1C40F",
+                        "critical": "#E8684C",
+                    },
+                    labels={"severity": "Severidad", "count": "Agencias"},
+                )
+                st.plotly_chart(fig_sev, use_container_width=True)
+
+            with col_a2:
+                st.subheader("Top 20 outliers por score")
+                df_top = df_out.nsmallest(20, "anomaly_score")[
+                    ["agency_id", "anomaly_score", "severity"]
+                ].copy()
+                df_top["anomaly_score"] = df_top["anomaly_score"].round(3)
+                fig_top = px.bar(
+                    df_top, x="anomaly_score", y="agency_id",
+                    orientation="h",
+                    color="severity",
+                    color_discrete_map={
+                        "normal": "#2ECC71",
+                        "warning": "#F1C40F",
+                        "critical": "#E8684C",
+                    },
+                    labels={"anomaly_score": "Score", "agency_id": "Agencia ID"},
+                )
+                fig_top.update_layout(yaxis={"categoryorder": "total ascending"})
+                st.plotly_chart(fig_top, use_container_width=True)
+
+            st.subheader("Tabla de anomalías detectadas")
+            df_show = df_out[["agency_id", "anomaly_score", "severity", "period"]].copy()
+            df_show["period"] = pd.to_datetime(df_show["period"]).dt.strftime("%Y-%m")
+            df_show.columns = ["Agencia ID", "Score", "Severidad", "Período"]
+            st.dataframe(df_show.sort_values("Score"), use_container_width=True, hide_index=True)
+
+            # ── Narrativa LLM por agencia ─────────────────────────────────────────
+            st.divider()
+            st.subheader("📝 Narrativa ejecutiva (LLM)")
+            agency_options = df_out.nsmallest(50, "anomaly_score")["agency_id"].astype(int).tolist()
+            selected_agency = st.selectbox(
+                "Seleccioná una agencia outlier para generar explicación",
+                options=agency_options,
+                format_func=lambda x: f"Agencia {x}",
+            )
+            if st.button("Generar explicación ejecutiva", type="primary"):
+                spinner_text = "Consultando al modelo..." if is_configured() else "Generando resumen offline..."
+                with st.spinner(spinner_text):
+                    narrative = generate_anomaly_narrative(int(selected_agency))
+                st.markdown(narrative)

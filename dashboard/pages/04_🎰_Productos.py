@@ -11,6 +11,7 @@ from dashboard.data import (
     evolucion_productos, evolucion_productos_unificado,
     top_sorteos, top_sorteos_unificado,
     ventas_por_hora, ventas_por_hora_unificado,
+    prediccion_basket, predicciones_disponibles,
     MONEDAS,
 )
 from dashboard.utils import fmt_money
@@ -120,3 +121,73 @@ df_show["ventas"] = df_show["ventas"].apply(lambda v: fmt_money(v, sym))
 df_show["premios"] = df_show["premios"].apply(lambda v: fmt_money(v, sym))
 df_show.columns = ["Sorteo", "Hora", "Ventas", "Premios", "% Margen", "Días Activos"]
 st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+# ── Market Basket ───────────────────────────────────────────────────────────
+st.divider()
+st.subheader("🛒 Market Basket Analysis")
+
+preds_ok = predicciones_disponibles()
+if not preds_ok["basket"]:
+    st.info(
+        "Análisis de canasta no disponible. "
+        "Corré `python -m ml.run_all` para generar predicciones."
+    )
+else:
+    df_basket = prediccion_basket()
+    if df_basket.empty:
+        st.warning("El archivo de basket existe pero está vacío.")
+    else:
+        st.caption(
+            "Reglas de asociación descubiertas con FP-Growth. "
+            "Lift > 1 indica que los productos se venden juntos más de lo esperado por azar. "
+            "Ordenadas por lift descendente."
+        )
+        min_conf = st.slider("Confianza mínima", 0.0, 1.0, 0.3, 0.05)
+        min_lift = st.slider("Lift mínimo", 0.5, 5.0, 1.0, 0.5)
+        df_b_filt = df_basket[
+            (df_basket["confidence"] >= min_conf) & (df_basket["lift"] >= min_lift)
+        ].copy()
+
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Reglas totales", f"{len(df_basket):,}")
+        k2.metric("Reglas filtradas", f"{len(df_b_filt):,}")
+        k3.metric("Lift máximo", f"{df_basket['lift'].max():.2f}")
+
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            st.subheader("Top 15 reglas por lift")
+            df_top_b = df_b_filt.nlargest(15, "lift")[
+                ["antecedent", "consequent", "lift", "confidence"]
+            ].copy()
+            df_top_b["lift"] = df_top_b["lift"].round(2)
+            df_top_b["confidence"] = (df_top_b["confidence"] * 100).round(1)
+            fig_b = px.bar(
+                df_top_b, x="lift", y=df_top_b.index,
+                orientation="h",
+                color="confidence",
+                color_continuous_scale="Blues",
+                labels={"lift": "Lift", "index": "Regla"},
+                hover_data=["antecedent", "consequent"],
+            )
+            fig_b.update_layout(yaxis={"categoryorder": "total ascending"})
+            st.plotly_chart(fig_b, use_container_width=True)
+
+        with col_b2:
+            st.subheader("Dispersión Confidence vs Lift")
+            fig_sc = px.scatter(
+                df_b_filt, x="confidence", y="lift",
+                size="support",
+                color="lift",
+                color_continuous_scale="Blues",
+                hover_data=["antecedent", "consequent"],
+                labels={"confidence": "Confianza", "lift": "Lift"},
+            )
+            st.plotly_chart(fig_sc, use_container_width=True)
+
+        st.subheader("Tabla de reglas")
+        df_b_show = df_b_filt[["antecedent", "consequent", "support", "confidence", "lift"]].copy()
+        df_b_show["support"] = (df_b_show["support"] * 100).round(2)
+        df_b_show["confidence"] = (df_b_show["confidence"] * 100).round(1)
+        df_b_show["lift"] = df_b_show["lift"].round(2)
+        df_b_show.columns = ["Antecedente", "Consecuente", "Soporte (%)", "Confianza (%)", "Lift"]
+        st.dataframe(df_b_show.sort_values("Lift", ascending=False), use_container_width=True, hide_index=True)

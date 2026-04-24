@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import sys
@@ -11,6 +12,7 @@ from dashboard.data import (
     ventas_por_mes, ventas_por_mes_unificado,
     ventas_por_producto, top_agencias,
     kpis_globales, kpis_globales_unificado,
+    prediccion_forecast, predicciones_disponibles,
     MONEDAS,
 )
 from dashboard.utils import fmt_money, fmt_table
@@ -100,6 +102,69 @@ with col4:
     )
     fig4.update_layout(yaxis={"categoryorder": "total ascending"})
     st.plotly_chart(fig4, use_container_width=True)
+
+st.divider()
+
+# ── Forecast ────────────────────────────────────────────────────────────────
+st.subheader("🔮 Pronóstico de ventas (ML)")
+
+preds_ok = predicciones_disponibles()
+if not preds_ok["forecast"]:
+    st.info(
+        "Modelo de forecasting no disponible. "
+        "Corré `python -m ml.run_all` para generar predicciones."
+    )
+else:
+    df_forecast = prediccion_forecast()
+    if df_forecast.empty:
+        st.warning("El archivo de forecast existe pero está vacío.")
+    else:
+        st.caption(
+            "Proyección mensual generada por Prophet/SARIMAX con intervalo de confianza. "
+            "Datos futuros: estimación puntual (línea) y banda de incertidumbre (sombreado)."
+        )
+        # Nacional
+        df_nac = df_forecast[df_forecast["entity_type"] == "nacional"].copy()
+        if not df_nac.empty:
+            df_nac["forecast_date"] = pd.to_datetime(df_nac["forecast_date"]).astype(str)
+            fig_fc = go.Figure()
+            fig_fc.add_trace(
+                go.Scatter(
+                    x=df_nac["forecast_date"],
+                    y=df_nac["yhat_upper"],
+                    fill=None,
+                    mode="lines",
+                    line_color="rgba(76,155,232,0.2)",
+                    showlegend=False,
+                )
+            )
+            fig_fc.add_trace(
+                go.Scatter(
+                    x=df_nac["forecast_date"],
+                    y=df_nac["yhat_lower"],
+                    fill="tonexty",
+                    mode="lines",
+                    line_color="rgba(76,155,232,0.2)",
+                    name="Intervalo 95%",
+                )
+            )
+            fig_fc.add_trace(
+                go.Scatter(
+                    x=df_nac["forecast_date"],
+                    y=df_nac["yhat"],
+                    mode="lines+markers",
+                    line_color="#4C9BE8",
+                    name="Pronóstico",
+                )
+            )
+            fig_fc.update_layout(
+                xaxis_title="Mes",
+                yaxis_title=f"Ventas estimadas ({sym})",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            )
+            st.plotly_chart(fig_fc, use_container_width=True)
+        else:
+            st.info("No hay pronóstico nacional disponible.")
 
 st.divider()
 

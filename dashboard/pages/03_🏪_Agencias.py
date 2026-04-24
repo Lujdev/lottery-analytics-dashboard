@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 import plotly.express as px
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ from dashboard.auth import require_auth
 from dashboard.data import (
     health_score_agencias, health_score_agencias_unificado,
     distribucion_agencias, distribucion_agencias_unificado,
+    prediccion_clusters, prediccion_churn, predicciones_disponibles,
     MONEDAS,
 )
 from dashboard.utils import fmt_money
@@ -116,3 +118,125 @@ df_display = df_show[["agencia", "health_score", "ventas", "pct_margen", "dias_a
 df_display["ventas"] = df_display["ventas"].apply(lambda v: fmt_money(v, sym))
 df_display.columns = ["Agencia", "Health Score", "Ventas", "% Margen", "Días Activos", "% Anulación", "Total Tickets"]
 st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+# ── Clustering ML ───────────────────────────────────────────────────────────
+st.divider()
+st.subheader("🧬 Segmentación automática (KMeans + PCA)")
+
+preds_ok = predicciones_disponibles()
+if not preds_ok["clusters"]:
+    st.info(
+        "Modelo de clustering no disponible. "
+        "Corré `python -m ml.run_all` para generar predicciones."
+    )
+else:
+    df_clust = prediccion_clusters()
+    if df_clust.empty:
+        st.warning("El archivo de clusters existe pero está vacío.")
+    else:
+        st.caption(
+            "Proyección 2D (PCA) de agencias activas segmentadas por comportamiento comercial. "
+            "Cada punto es una agencia; el color indica el cluster asignado por KMeans."
+        )
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            df_clust["cluster_label"] = df_clust["cluster_id"].astype(str)
+            fig_cl = px.scatter(
+                df_clust, x="pca_x", y="pca_y",
+                color="cluster_label",
+                hover_data=["agency_id", "centroid_distance"],
+                labels={"pca_x": "Componente 1", "pca_y": "Componente 2", "cluster_label": "Cluster"},
+                color_discrete_sequence=px.colors.qualitative.Set2,
+            )
+            fig_cl.update_traces(marker=dict(size=8, opacity=0.7))
+            st.plotly_chart(fig_cl, use_container_width=True)
+
+        with col_c2:
+            st.subheader("Resumen por cluster")
+            clust_summary = df_clust.groupby("cluster_id").agg(
+                agencias=("agency_id", "count"),
+                distancia_prom=("centroid_distance", "mean"),
+            ).reset_index()
+            clust_summary["distancia_prom"] = clust_summary["distancia_prom"].round(2)
+            clust_summary["cluster_label"] = clust_summary["cluster_id"].astype(str)
+            fig_cs = px.bar(
+                clust_summary, x="cluster_id", y="agencias",
+                color="cluster_label",
+                labels={"cluster_id": "Cluster", "agencias": "Cantidad de agencias"},
+                color_discrete_sequence=px.colors.qualitative.Set2,
+            )
+            st.plotly_chart(fig_cs, use_container_width=True)
+            st.dataframe(
+                clust_summary.rename(columns={
+                    "cluster_id": "Cluster",
+                    "agencias": "Agencias",
+                    "distancia_prom": "Distancia promedio al centroide",
+                }),
+                use_container_width=True, hide_index=True,
+            )
+
+# ── Churn ML ────────────────────────────────────────────────────────────────
+st.divider()
+st.subheader("⚠️ Riesgo de abandono (Churn)")
+
+if not preds_ok["churn"]:
+    st.info(
+        "Modelo de churn no disponible. "
+        "Corré `python -m ml.run_all` para generar predicciones."
+    )
+else:
+    df_churn = prediccion_churn()
+    if df_churn.empty:
+        st.warning("El archivo de churn existe pero está vacío.")
+    else:
+        st.caption(
+            "Random Forest estima la probabilidad de que una agencia deje de vender en los próximos 30 días. "
+            "Banda 'alto' = priorizar contacto comercial."
+        )
+        banda = st.selectbox(
+            "Filtrar por banda de riesgo",
+            ["Todas", "alto", "medio", "bajo"],
+            index=0,
+        )
+        df_ch_filt = df_churn if banda == "Todas" else df_churn[df_churn["risk_band"] == banda]
+
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Agencias scored", f"{len(df_churn):,}")
+        k2.metric("Riesgo alto", f"{len(df_churn[df_churn['risk_band'] == 'alto']):,}")
+        k3.metric("Riesgo medio", f"{len(df_churn[df_churn['risk_band'] == 'medio']):,}")
+
+        col_ch1, col_ch2 = st.columns(2)
+        with col_ch1:
+            st.subheader("Distribución de riesgo")
+            band_counts = df_churn["risk_band"].value_counts().reset_index()
+            band_counts.columns = ["risk_band", "count"]
+            fig_band = px.pie(
+                band_counts, values="count", names="risk_band",
+                color="risk_band",
+                color_discrete_map={"alto": "#E8684C", "medio": "#F1C40F", "bajo": "#2ECC71"},
+                hole=0.4,
+            )
+            st.plotly_chart(fig_band, use_container_width=True)
+
+        with col_ch2:
+            st.subheader(f"Top 20 — Mayor riesgo ({banda})")
+            df_top_ch = df_ch_filt.nlargest(20, "churn_probability")[
+                ["agency_id", "churn_probability", "risk_band"]
+            ].copy()
+            df_top_ch["churn_probability"] = (df_top_ch["churn_probability"] * 100).round(1)
+            fig_top_ch = px.bar(
+                df_top_ch, x="churn_probability", y="agency_id",
+                orientation="h",
+                color="risk_band",
+                color_discrete_map={"alto": "#E8684C", "medio": "#F1C40F", "bajo": "#2ECC71"},
+                labels={"churn_probability": "% Churn", "agency_id": "Agencia ID"},
+            )
+            fig_top_ch.update_layout(yaxis={"categoryorder": "total ascending"})
+            st.plotly_chart(fig_top_ch, use_container_width=True)
+
+        st.subheader("Tabla de riesgo de abandono")
+        df_ch_show = df_ch_filt[["agency_id", "churn_probability", "risk_band", "prediction_date"]].copy()
+        df_ch_show["churn_probability"] = (df_ch_show["churn_probability"] * 100).round(1)
+        df_ch_show["prediction_date"] = pd.to_datetime(df_ch_show["prediction_date"]).dt.strftime("%Y-%m-%d")
+        df_ch_show.columns = ["Agencia ID", "% Churn", "Banda", "Fecha scoring"]
+        st.dataframe(df_ch_show.sort_values("% Churn", ascending=False), use_container_width=True, hide_index=True)

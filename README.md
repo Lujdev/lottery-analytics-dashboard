@@ -4,7 +4,8 @@ Full-stack data platform for lottery operations: ETL pipeline (PostgreSQL → Pa
 
 ## Features
 
-- **6 analysis pages**: Performance, Anomalies, Agencies, Products, Providers, Risk metrics
+- **8 analysis pages**: Performance, Anomalies, Agencies, Products, Providers, Risk metrics, Chat, Executive Report
+- **Predictive ML pipeline**: Clustering, anomaly detection, forecasting, churn risk, market basket (optional)
 - **Multi-currency support**: VES, USD, BRL, PEN, COP with real-time BCV exchange rates
 - **Health scoring**: Composite metric (sales + margin + activity + annulment) for agency ranking
 - **Dynamic filtering**: Per-currency or unified "Todas (en Bs.)" conversion
@@ -38,6 +39,12 @@ uv run python -m etl.extractors.facts
 uv run python -m etl.extractors.dimensions
 uv run python -m etl.extractors.providers
 
+# Optional: install ML + LLM extras
+uv sync --extra ml --extra llm
+
+# Run predictive pipeline (generates data/predictions/*.parquet)
+uv run python -m ml.run_all
+
 # Run dashboard
 uv run streamlit run dashboard/app.py
 ```
@@ -46,12 +53,14 @@ Navigate to `http://localhost:8501`. Login with password configured in `.streaml
 
 ## Pages
 
-1. **📈 Performance** — KPIs, monthly trends, top products/agencies
-2. **🔍 Anomalies** — Annulment patterns, suspicious agencies (>30%)
-3. **🏪 Agencies** — Health scores, scatter (sales vs margin), searchable table
+1. **📈 Performance** — KPIs, monthly trends, top products/agencies, forecast overlay
+2. **🔍 Anomalies** — Annulment patterns, suspicious agencies (>30%), ML outlier detection + LLM narrative
+3. **🏪 Agencies** — Health scores, scatter (sales vs margin), searchable table, clustering + churn risk
 4. **🎰 Products** — Type participation, product evolution, draw details
 5. **🌐 Providers** — Volume, failure rates, monthly evolution
 6. **⚠️ Risk** — Payout ratios, most-bet numbers
+7. **💬 Chat** — Conversational analytics with SQL guardrails or offline catalog
+8. **📊 Reporte Ejecutivo** — Monthly CEO report (LLM-enhanced or offline)
 
 ## Docker Deployment
 
@@ -70,13 +79,14 @@ Nginx proxy handles WebSocket upgrades (required by Streamlit). For SSL, mount c
 ```
 .
 ├── dashboard/
-│   ├── pages/           # 6 Streamlit pages
+│   ├── pages/           # 8 Streamlit pages
+│   ├── llm/             # OpenRouter client, chat, narrative, audit
 │   ├── auth.py          # Shared auth module
-│   ├── data.py          # DuckDB queries (unified + per-currency)
+│   ├── data.py          # DuckDB queries (unified + per-currency) + prediction loaders
 │   ├── rates.py         # BCV API + forex caching
 │   ├── utils.py         # fmt_money(), fmt_table()
 │   ├── app.py           # Entry point
-│   └── .streamlit/       # Secrets + config
+│   └── .streamlit/      # Secrets + config
 ├── etl/
 │   ├── config.py        # DB connection + paths
 │   ├── logger.py        # Structured logging
@@ -84,16 +94,63 @@ Nginx proxy handles WebSocket upgrades (required by Streamlit). For SSL, mount c
 │       ├── facts.py     # Tickets + bets (monthly Parquet)
 │       ├── dimensions.py # Agencies, products, lotteries
 │       └── providers.py  # External provider data
+├── ml/
+│   ├── run_all.py       # Batch orchestrator (5 pipelines)
+│   ├── features.py      # Feature engineering for each model
+│   ├── train_*.py       # Individual pipelines: clustering, anomaly, forecast, churn, basket
+│   ├── schemas.py       # Output schemas + validation
+│   └── config.py        # Paths, thresholds, OpenRouter settings
 ├── data/
 │   ├── facts/           # Fact tables (bets_*.parquet, tickets_*.parquet)
 │   ├── dimensions/      # Dimension tables (agencys, products, lotteries)
-│   └── aggregated/      # Pre-aggregated (sales_by_agency, sales_by_loteries)
+│   ├── aggregated/      # Pre-aggregated (sales_by_agency, sales_by_loteries)
+│   ├── predictions/     # ML outputs (*.parquet)
+│   ├── reports/         # Generated markdown reports
+│   └── cache/           # LLM disk cache
 ├── Dockerfile           # Python 3.12-slim, uv-based build
 ├── docker-compose.yml   # Dashboard + Nginx services
 ├── nginx.conf           # WebSocket-aware reverse proxy
-├── pyproject.toml       # Dependencies
+├── pyproject.toml       # Dependencies (optional extras: ml, llm)
 └── README.md
 ```
+
+## ML / Predictive Pipeline
+
+Optional batch pipeline (`uv sync --extra ml`) that generates 5 prediction datasets:
+
+| Pipeline | Model | Output | Description |
+|----------|-------|--------|-------------|
+| Clustering | KMeans + PCA | `agency_clusters.parquet` | Segments agencies by behavior |
+| Anomaly Detection | IsolationForest | `anomaly_scores.parquet` | Flags multivariate outliers |
+| Forecasting | Prophet / SARIMAX | `forecast_sales.parquet` | 3-month sales projection |
+| Churn Risk | RandomForest | `agency_churn_risk.parquet` | Probability of 30-day inactivity |
+| Market Basket | FP-Growth | `basket_rules.parquet` | Product association rules |
+
+Run the full pipeline:
+```bash
+uv run python -m ml.run_all
+```
+
+Logs are written to `logs/ml_run_*.log`. Each stage is independent; partial failures do not block the rest.
+
+### Known Limitations
+- **Churn leakage**: when `churn_days=30`, the feature `monetary_30d` overlaps with the label window, inflating holdout accuracy. This is documented as a known artifact; for rigorous training, exclude `monetary_30d` or increase `churn_days`.
+
+## LLM / Chat & Reports
+
+Optional OpenRouter integration (`uv sync --extra llm`) powers:
+- **Chat Assistant** (page 7): SQL-validated queries or offline catalog fallback
+- **Anomaly Narrative**: Per-agency executive explanation
+- **Executive Report** (page 8): Monthly CEO markdown report
+
+Configure in `.env`:
+```bash
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_MODEL=google/gemini-flash-1.5
+LLM_ENABLED=true
+```
+
+If the key is missing, the dashboard degrades gracefully to offline mode with structured data summaries.
 
 ## Key Concepts
 

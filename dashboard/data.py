@@ -56,6 +56,27 @@ def ventas_por_producto(currency_id: int | None = None) -> pd.DataFrame:
         return conn.execute(sql).df()
 
 
+def ventas_por_agencia_y_producto(n: int = 50) -> pd.DataFrame:
+    """Ventas desagregadas por agencia y producto (para queries cruzadas)."""
+    sql = f"""
+        SELECT
+            a.name  AS agencia,
+            p.name  AS producto,
+            SUM(s.sales)    AS ventas,
+            SUM(s.prize)    AS premios,
+            ROUND((SUM(s.sales) - SUM(s.prize)) / NULLIF(SUM(s.sales), 0) * 100, 2) AS pct_margen
+        FROM '{DATA_DIR}/aggregated/sales_by_agency.parquet' s
+        LEFT JOIN '{DATA_DIR}/dimensions/agencys.parquet' a ON s.agency_id = a.id
+        LEFT JOIN '{DATA_DIR}/dimensions/new_products.parquet' p ON s.new_product_id = p.id
+        WHERE s.sales > 0
+        GROUP BY 1, 2
+        ORDER BY ventas DESC
+        LIMIT {n}
+    """
+    with _conn() as conn:
+        return conn.execute(sql).df()
+
+
 def top_agencias(n: int = 20, currency_id: int | None = None) -> pd.DataFrame:
     where = f"WHERE s.currency_id = {currency_id}" if currency_id else ""
     sql = f"""
@@ -432,6 +453,26 @@ def top_sorteos(currency_id: int | None = None, n: int = 20) -> pd.DataFrame:
         return conn.execute(sql).df()
 
 
+def ventas_por_sorteo_y_hora(n: int = 50) -> pd.DataFrame:
+    """Ventas por sorteo específico y hora del día."""
+    sql = f"""
+        SELECT
+            l.name                           AS sorteo,
+            l.lotery_hour                    AS hora,
+            SUM(s.sales)                     AS ventas,
+            SUM(s.prize)                     AS premios,
+            ROUND((SUM(s.sales) - SUM(s.prize)) / NULLIF(SUM(s.sales), 0) * 100, 2) AS pct_margen
+        FROM '{DATA_DIR}/aggregated/sales_by_loteries.parquet' s
+        LEFT JOIN '{DATA_DIR}/dimensions/loteries.parquet' l ON s.lotery_id = l.id
+        WHERE s.sales > 0 AND l.lotery_hour IS NOT NULL
+        GROUP BY 1, 2
+        ORDER BY ventas DESC
+        LIMIT {n}
+    """
+    with _conn() as conn:
+        return conn.execute(sql).df()
+
+
 def ventas_por_hora(currency_id: int | None = None) -> pd.DataFrame:
     where = f"AND s.moneda_id = {currency_id}" if currency_id else ""
     sql = f"""
@@ -625,6 +666,80 @@ def evolucion_proveedor_mes() -> pd.DataFrame:
         df = conn.execute(sql).df()
     df["mes"] = df["mes"].astype(str)
     return df
+
+
+# ── Eje 7: Predicciones ML ─────────────────────────────────────────────────
+
+PREDICTIONS_DIR = DATA_DIR / "predictions"
+
+
+def _pred_parquet_path(name: str) -> Path:
+    return PREDICTIONS_DIR / f"{name}.parquet"
+
+
+def _read_prediction(name: str, columns: list[str]) -> pd.DataFrame:
+    """Lee un parquet de predicciones; devuelve DataFrame vacío si no existe."""
+    path = _pred_parquet_path(name)
+    if not path.exists():
+        return pd.DataFrame({col: pd.Series(dtype=object) for col in columns})
+    with _conn() as conn:
+        return conn.execute(f"SELECT * FROM '{path}'").df()
+
+
+def prediccion_clusters() -> pd.DataFrame:
+    """Segmentación de agencias vía KMeans + PCA."""
+    cols = [
+        "agency_id", "cluster_id", "pca_x", "pca_y",
+        "centroid_distance", "run_id", "run_date",
+    ]
+    return _read_prediction("agency_clusters", cols)
+
+
+def prediccion_anomalias() -> pd.DataFrame:
+    """Scores de anomalías por agencia-período."""
+    cols = [
+        "agency_id", "period", "anomaly_score", "is_anomaly",
+        "severity", "exclusion_reason", "run_id", "run_date",
+    ]
+    return _read_prediction("anomaly_scores", cols)
+
+
+def prediccion_forecast() -> pd.DataFrame:
+    """Pronósticos de ventas por entidad y fecha futura."""
+    cols = [
+        "entity_type", "entity_id", "forecast_date", "yhat",
+        "yhat_lower", "yhat_upper", "model", "run_id", "run_date",
+    ]
+    return _read_prediction("forecast_sales", cols)
+
+
+def prediccion_churn() -> pd.DataFrame:
+    """Riesgo de abandono por agencia."""
+    cols = [
+        "agency_id", "churn_probability", "risk_band",
+        "top_features", "prediction_date", "run_id",
+    ]
+    return _read_prediction("agency_churn_risk", cols)
+
+
+def prediccion_basket() -> pd.DataFrame:
+    """Reglas de asociación de market basket."""
+    cols = [
+        "antecedent", "consequent", "support",
+        "confidence", "lift", "period", "run_id",
+    ]
+    return _read_prediction("basket_rules", cols)
+
+
+def predicciones_disponibles() -> dict[str, bool]:
+    """Devuelve un mapa de qué predicciones existen en disco."""
+    return {
+        "clusters": _pred_parquet_path("agency_clusters").exists(),
+        "anomalies": _pred_parquet_path("anomaly_scores").exists(),
+        "forecast": _pred_parquet_path("forecast_sales").exists(),
+        "churn": _pred_parquet_path("agency_churn_risk").exists(),
+        "basket": _pred_parquet_path("basket_rules").exists(),
+    }
 
 
 def fallos_por_proveedor() -> pd.DataFrame:
