@@ -37,7 +37,9 @@ def _fit_prophet(df: pd.DataFrame, horizon: int) -> pd.DataFrame:
 
     Devuelve SOLO el horizonte futuro (no las fechas históricas).
     """
-    m = Prophet(yearly_seasonality=True, daily_seasonality=False)
+    n = len(df)
+    yearly_seasonality = n >= 12
+    m = Prophet(yearly_seasonality=yearly_seasonality, daily_seasonality=False)
     m.fit(df[["ds", "y"]])
     future = m.make_future_dataframe(periods=horizon, freq="MS")
     forecast = m.predict(future)
@@ -49,18 +51,27 @@ def _fit_prophet(df: pd.DataFrame, horizon: int) -> pd.DataFrame:
 
 
 def _fit_sarimax(df: pd.DataFrame, horizon: int) -> pd.DataFrame:
-    """Forecast con SARIMAX(1,1,1)(1,1,1,12) como fallback robusto."""
+    """Forecast con SARIMAX(1,1,1)(1,1,1,12) como fallback robusto.
+
+    Si hay menos de 24 observaciones se omite la componente estacional
+    porque no hay suficientes datos para estimarla."""
     y = df.set_index("ds")["y"]
     # Asegurar frecuencia mensual
     y = y.asfreq("MS").fillna(0)
+    n = len(y)
     try:
-        model = SARIMAX(
-            y,
-            order=(1, 1, 1),
-            seasonal_order=(1, 1, 1, 12),
-            enforce_stationarity=False,
-            enforce_invertibility=False,
-        )
+        if n >= 24:
+            model = SARIMAX(
+                y,
+                order=(1, 1, 1),
+                seasonal_order=(1, 1, 1, 12),
+                enforce_stationarity=False,
+                enforce_invertibility=False,
+            )
+        else:
+            model = SARIMAX(
+                y, order=(1, 1, 1), enforce_stationarity=False, enforce_invertibility=False
+            )
         fitted = model.fit(disp=False)
     except Exception as exc:
         logger.warning("SARIMAX fit falló (%s); probando modelo simple ARIMA(1,1,1).", exc)
@@ -92,6 +103,18 @@ def _forecast_entity(
     # Filtrar ds no nulo y y no negativo
     df = df.dropna(subset=["ds", "y"])
     df["y"] = df["y"].clip(lower=0)
+
+    # Defense in depth: detectar mes parcial residual (outlier extremo en el último punto)
+    if len(df) >= 4:
+        last_y = df["y"].iloc[-1]
+        recent_median = df["y"].iloc[-4:-1].median()
+        if recent_median > 0 and last_y < recent_median * 0.1:
+            logger.warning(
+                "Forecast %s/%s: último mes %s es outlier extremo (%.0f vs mediana reciente %.0f); excluyendo.",
+                entity_type, entity_id, df["ds"].iloc[-1].strftime("%Y-%m"),
+                last_y, recent_median,
+            )
+            df = df.iloc[:-1].copy()
 
     if len(df) < MIN_MONTHS_FOR_FORECAST:
         logger.warning("Forecast omitido para %s/%s: %d meses < mínimo %d.", entity_type, entity_id, len(df), MIN_MONTHS_FOR_FORECAST)

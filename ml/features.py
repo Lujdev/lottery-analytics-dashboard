@@ -182,8 +182,25 @@ def build_forecast_series(entity_type: str = "national", top_n_agencies: int = 5
     else:
         raise ValueError(f"entity_type no soportado: {entity_type}")
 
-    # Normalizar frecuencia mensual: rellenar huecos con 0
+    # Detectar y excluir mes parcial (último mes con datos incompletos)
     df["mes"] = pd.to_datetime(df["mes"])
+    if not df.empty:
+        max_date = _max_date_sales()
+        last_month = df["mes"].max()
+        if (
+            max_date.year == last_month.year
+            and max_date.month == last_month.month
+            and max_date.day < 25
+        ):
+            df = df[df["mes"] < last_month].copy()
+            logger.info(
+                "Forecast series (%s): excluyendo mes parcial %s (máx fecha en datos: %s)",
+                entity_type,
+                last_month.strftime("%Y-%m"),
+                max_date.strftime("%Y-%m-%d"),
+            )
+
+    # Normalizar frecuencia mensual: rellenar huecos con 0
     all_months = pd.date_range(df["mes"].min(), df["mes"].max(), freq="MS")
 
     if entity_type == "national":

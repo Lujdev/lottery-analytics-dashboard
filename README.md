@@ -6,6 +6,7 @@ Full-stack data platform for lottery operations: ETL pipeline (PostgreSQL → Pa
 
 - **8 analysis pages**: Performance, Anomalies, Agencies, Products, Providers, Risk metrics, Chat, Executive Report
 - **Predictive ML pipeline**: Clustering, anomaly detection, forecasting, churn risk, market basket (optional)
+- **Hybrid business chat**: Curated DuckDB views + safe read-only PostgreSQL access for complex questions
 - **Multi-currency support**: VES, USD, BRL, PEN, COP with real-time BCV exchange rates
 - **Health scoring**: Composite metric (sales + margin + activity + annulment) for agency ranking
 - **Dynamic filtering**: Per-currency or unified "Todas (en Bs.)" conversion
@@ -135,6 +136,7 @@ Logs are written to `logs/ml_run_*.log`. Each stage is independent; partial fail
 
 ### Known Limitations
 - **Churn leakage**: when `churn_days=30`, the feature `monetary_30d` overlaps with the label window, inflating holdout accuracy. This is documented as a known artifact; for rigorous training, exclude `monetary_30d` or increase `churn_days`.
+- **Monthly forecasts require complete months**: the forecasting pipeline now excludes incomplete trailing months before training. If your latest month is partial, the next-month forecast will anchor on the last complete month instead.
 
 ## LLM / Chat & Reports
 
@@ -142,6 +144,47 @@ Optional OpenRouter integration (`uv sync --extra llm`) powers:
 - **Chat Assistant** (page 7): SQL-validated queries or offline catalog fallback
 - **Anomaly Narrative**: Per-agency executive explanation
 - **Executive Report** (page 8): Monthly CEO markdown report
+
+### Chat capabilities
+
+The chat now uses a **hybrid retrieval model**:
+
+1. **Curated DuckDB views over Parquet** for fast, safe dashboard-style questions.
+2. **Read-only PostgreSQL local access** (encapsulated in safe functions) for deeper business questions.
+
+Examples it can answer:
+
+- "¿Qué producto vendió más?"
+- "¿A qué grupo pertenece esta agencia?"
+- "¿Cuáles números han salido más en La Granjita 07:00 PM?"
+- "¿Cuáles números apuestan más los usuarios en La Granjita 07:00 PM?"
+- "¿Cuál fue la diferencia de ventas de febrero y marzo de GANALOTERIAS INT?"
+- "¿Cuánto vendió La Granjita en marzo?"
+
+### Conversational memory
+
+The chat keeps **structured conversational memory** during the session so follow-up questions do not need to restate the full subject every time.
+
+It can preserve, when confidently inferred:
+
+- active entity (`agency`, `product`, `lottery`, etc.)
+- lottery hour / draw slot
+- referenced months
+- metric or intent (`sales`, `difference`, `forecast`, `most-bet numbers`, etc.)
+
+This enables follow-ups like:
+
+- "¿Cuál es la agencia que lidera las ventas?" → "¿cuánto vende?" → "¿y en febrero vs marzo?"
+- "La Granjita 07:00 PM" → "¿y ese horario cuánto mueve?"
+
+### Read-only PostgreSQL business layer
+
+For complex queries, the chat does **not** expose free SQL over PostgreSQL to the LLM. Instead, it uses safe query helpers and controlled matching logic.
+
+See:
+
+- `dashboard/db_local.py`
+- `docs/DB_LOCAL_READONLY_GUIDE.md`
 
 Configure in `.env`:
 ```bash
@@ -183,4 +226,3 @@ MIT — code is open source. **Data (`data/`) is NOT included** — it's proprie
 - Dashboard caches Streamlit functions (KPIs, rates) with configurable TTL
 - ETL uses fresh DB connection per daily partition (avoids timeout on large months)
 - Parquet queries scale: 5M+ agency rows, 50M+ bet rows, <500ms response times
-
